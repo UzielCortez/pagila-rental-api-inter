@@ -127,3 +127,91 @@ JOIN film_category fc ON fc.film_id = lr.film_id
 JOIN category c       ON c.category_id = fc.category_id
 GROUP BY c.category_id, c.name
 ORDER BY late_rentals DESC, c.category_id;
+
+/***********************
+ Q5 — Auditoría: pagos sospechosos
+ Propósito: detectar pagos “inusuales”.
+   - Ejemplo A: pagos con amount > 20.
+   - Ejemplo B: pagos repetidos el mismo día por el mismo cliente
+     y mismo monto.
+**********************/
+
+SELECT
+    p.payment_id,
+    p.customer_id,
+    p.amount,
+    p.payment_date,
+    'DUPLICATED_SAME_DAY' AS flag_reason
+FROM payment p
+JOIN (
+    SELECT
+        customer_id,
+        amount,
+        DATE(payment_date) AS pay_day,
+        COUNT(*) AS cnt
+    FROM payment
+    GROUP BY customer_id, amount, DATE(payment_date)
+    HAVING COUNT(*) > 1
+) dup
+  ON dup.customer_id = p.customer_id
+ AND dup.amount      = p.amount
+ AND dup.pay_day     = DATE(p.payment_date)
+ORDER BY customer_id, payment_date, payment_id;
+
+
+ /***********************
+ Q6 — “Clientes con riesgo” (mora)
+ Propósito: encontrar clientes con N o más rentas tardías.
+ Definición: renta tardía si return_date > due_date
+  (due_date = rental_date + film.rental_duration).
+**********************/
+
+WITH rental_due AS (
+    SELECT
+        r.rental_id,
+        r.customer_id,
+        r.rental_date,
+        r.return_date,
+        f.film_id,
+        f.rental_duration,
+        r.rental_date + (f.rental_duration || ' days')::interval AS due_date
+    FROM rental r
+    JOIN inventory i ON i.inventory_id = r.inventory_id
+    JOIN film f     ON f.film_id = i.film_id
+    WHERE r.return_date IS NOT NULL
+),
+late_rentals AS (
+    SELECT
+        rd.*
+    FROM rental_due rd
+    WHERE rd.return_date > rd.due_date
+)
+SELECT
+    c.customer_id,
+    c.first_name,
+    c.last_name,
+    COUNT(lr.rental_id) AS late_returns_count,
+    MAX(lr.return_date) AS last_late_return_date
+FROM late_rentals lr
+JOIN customer c ON c.customer_id = lr.customer_id
+GROUP BY c.customer_id, c.first_name, c.last_name
+HAVING COUNT(lr.rental_id) >= 3   -- N mínimo de rentas tardías (ajustable)
+ORDER BY late_returns_count DESC, last_late_return_date DESC;
+
+
+ /***********************
+ Q7 — Integridad/consistencia: inventario con rentas activas duplicadas
+ Propósito: detectar inventarios que tienen más de una renta activa
+ (return_date IS NULL). Esto sirve para validar que la API
+ no permita dobles rentas simultáneas del mismo inventory_id.
+**********************/
+
+SELECT
+    r.inventory_id,
+    COUNT(*) AS active_rentals_count,
+    ARRAY_AGG(r.rental_id ORDER BY r.rental_id) AS rental_ids
+FROM rental r
+WHERE r.return_date IS NULL
+GROUP BY r.inventory_id
+HAVING COUNT(*) > 1
+ORDER BY active_rentals_count DESC, r.inventory_id;
