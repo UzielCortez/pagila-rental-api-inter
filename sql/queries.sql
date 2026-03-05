@@ -131,7 +131,6 @@ ORDER BY late_rentals DESC, c.category_id;
 /***********************
  Q5 — Auditoría: pagos sospechosos
  Propósito: detectar pagos “inusuales”.
-   - Ejemplo A: pagos con amount > 20.
    - Ejemplo B: pagos repetidos el mismo día por el mismo cliente
      y mismo monto.
 **********************/
@@ -195,7 +194,7 @@ SELECT
 FROM late_rentals lr
 JOIN customer c ON c.customer_id = lr.customer_id
 GROUP BY c.customer_id, c.first_name, c.last_name
-HAVING COUNT(lr.rental_id) >= 3   -- N mínimo de rentas tardías (ajustable)
+HAVING COUNT(lr.rental_id) >= 3 
 ORDER BY late_returns_count DESC, last_late_return_date DESC;
 
 
