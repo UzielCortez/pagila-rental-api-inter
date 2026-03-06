@@ -124,12 +124,12 @@ Este backend está diseñado para soportar alta concurrencia cumpliendo con prin
   * Elevación dinámica a REPEATABLE READ específicamente en el endpoint de devoluciones para asegurar lecturas consistentes durante la transacción.
 * *Retry con Exponential Backoff:* Implementación de un sistema de reintentos automáticos que intercepta errores de concurrencia nativos de PostgreSQL (Deadlocks 40P01 y Serialization Failures 40001), escalando el tiempo de espera exponencialmente antes de abortar la petición con un error 500.
 
-# 🛡️ Sistema de Triggers y Auditoría (PostgreSQL)
+#  Sistema de Triggers y Auditoría (PostgreSQL)
 Este módulo contiene la lógica de base de datos diseñada para garantizar la integridad del negocio y el cumplimiento (compliance) a través de **Triggers** y **Funciones en PL/pgSQL**. 
 
 Se divide en dos componentes principales integrados en el archivo `sql/triggers.sql`: la regla de negocio preventiva ("El Cadenero") y el sistema de trazabilidad ("El Chismoso").
 
-## 1. 🛑 Regla de Negocio Preventiva (Límite de Rentas)
+## 1. Regla de Negocio Preventiva (Límite de Rentas)
 Para evitar el acaparamiento de inventario, el sistema bloquea transacciones a nivel de base de datos antes de que ocurran.
 
 * **Tipo:** `BEFORE INSERT` en la tabla `rental`.
@@ -138,7 +138,7 @@ Para evitar el acaparamiento de inventario, el sistema bloquea transacciones a n
   2. Si el cliente ya tiene **3 o más rentas activas**, el trigger lanza una excepción (`RAISE EXCEPTION`).
   3. La transacción se aborta automáticamente, devolviendo un error a la aplicación con el mensaje: *"ALERTA DE NEGOCIO: Límite superado"*.
 
-## 2. 🕵️ Sistema de Auditoría (Trazabilidad JSONB)
+## 2. Sistema de Auditoría (Trazabilidad JSONB)
 Para cumplir con los requisitos de auditoría de la empresa, todo cambio en la tabla de rentas queda registrado históricamente.
 
 * **Tipo:** `AFTER INSERT OR UPDATE OR DELETE` en la tabla `rental`.
@@ -149,10 +149,10 @@ Para cumplir con los requisitos de auditoría de la empresa, todo cambio en la t
   3. Captura el usuario de la sesión (`session_user`) y la marca de tiempo exacta.
   4. Guarda el estado de la fila antes (`OLD`) y después (`NEW`) de la modificación utilizando el formato `JSONB` (`row_to_json`), lo que permite consultas flexibles sobre el historial.
 
-## ⚙️ Instalación y Uso
+##  Instalación y Uso
 Todo el código está consolidado en un solo script para facilitar su despliegue.
 
-### 🔑 Credenciales de Acceso (Entorno de Desarrollo)
+###  Credenciales de Acceso (Entorno de Desarrollo)
 Si estás evaluando este proyecto, utiliza las siguientes credenciales para conectarte al contenedor Docker:
 * **Usuario:** `postgres`
 * **Contraseña:** `postgres`
@@ -163,7 +163,7 @@ Si estás evaluando este proyecto, utiliza las siguientes credenciales para cone
 2. Ejecuta el contenido completo del archivo `sql/triggers.sql` en el Query Tool.
    * *Nota: El script es idempotente (incluye comandos `DROP TRIGGER IF EXISTS`), por lo que puedes ejecutarlo varias veces sin causar errores.*
 
-## 🧪 Cómo probarlo
+## Cómo probarlo
 ### Probar la Regla de Negocio:
 Intenta insertar 4 rentas para el mismo cliente sin fecha de devolución. Las primeras 3 pasarán, la 4ta marcará error:
 ```sql
@@ -172,3 +172,28 @@ INSERT INTO rental (rental_date, inventory_id, customer_id, staff_id) VALUES (NO
 INSERT INTO rental (rental_date, inventory_id, customer_id, staff_id) VALUES (NOW(), 3, 1, 1);
 -- La siguiente línea detonará la alerta del trigger:
 INSERT INTO rental (rental_date, inventory_id, customer_id, staff_id) VALUES (NOW(), 4, 1, 1);
+
+# Indices 
+
+La presente sección justifica la estrategia de indexación implementada. Las decisiones técnicas tomadas aquí responden a la urgencia de estabilizar la base de datos y detener la severa degradación de rendimiento observada durante las pruebas de carga.
+
+## Indice parcial
+El trigger de validación colapsaba el rendimiento general al verse obligado a escanear el historial completo de rentas de cada cliente en cada petición. Era insostenible mantener el sistema sin esta optimización, por lo que la lectura se restringió explícitamente a las transacciones activas:
+
+    CREATE INDEX IF NOT EXISTS idx_rental_customer_active 
+    ON rental(customer_id) 
+    WHERE return_date IS NULL;
+
+## Indices de llaves foráneas
+PostgreSQL no indexa llaves foráneas por defecto. Dado que depende de sqlalchemy, la resolución de relaciones mediante JOINs provocaba escaneos secuenciales masivos. La ausencia de estos índices estrangulaba el flujo de datos y generaba cuellos de botella inaceptables en el servidor, haciendo estrictamente obligatoria su creación:
+
+    CREATE INDEX IF NOT EXISTS idx_rental_inventory_id ON rental(inventory_id);
+    CREATE INDEX IF NOT EXISTS idx_rental_staff_id ON rental(staff_id);
+    CREATE INDEX IF NOT EXISTS idx_rental_date ON rental(rental_date);
+    CREATE INDEX IF NOT EXISTS idx_inventory_film_id ON inventory(film_id);
+
+## Instrucciones de despliegue
+Para aplicar estos cambios en el entorno y restaurar la operatividad del sistema, ejecute las sentencias en pgAdmin o corra el script completo a través de la consola mediante psql. Las sentencias están protegidas para ignorar conflictos en caso de que los índices ya existan.
+
+    psql -U postgres -d pagila -f sql/indexes.sql
+
