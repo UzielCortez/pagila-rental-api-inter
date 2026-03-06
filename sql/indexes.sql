@@ -10,3 +10,7 @@ CREATE INDEX IF NOT EXISTS idx_rental_staff_id ON rental(staff_id);
 CREATE INDEX IF NOT EXISTS idx_rental_date ON rental(rental_date);
 
 CREATE INDEX IF NOT EXISTS idx_inventory_film_id ON inventory(film_id);
+
+CREATE UNIQUE INDEX unique_active_rental
+ON rental(inventory_id)
+WHERE return_date IS NULL;
